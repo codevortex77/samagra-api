@@ -1,10 +1,12 @@
 {
   "name": "samagra-intel-api",
   "version": "1.0.0",
-  "description": "Samagra Portal API",
   "scripts": {
     "dev": "vercel dev",
     "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "undici": "^6.19.0"
   },
   "engines": {
     "node": ">=18"
