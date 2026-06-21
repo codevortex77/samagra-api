@@ -6,6 +6,9 @@
     "dev": "vercel dev",
     "deploy": "vercel --prod"
   },
+  "dependencies": {
+    "undici": "^6.0.0"
+  },
   "engines": {
     "node": ">=18"
   }
