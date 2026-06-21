@@ -1,0 +1,12 @@
+{
+  "name": "samagra-intel-api",
+  "version": "1.0.0",
+  "description": "Samagra Portal Citizen Intel API",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
