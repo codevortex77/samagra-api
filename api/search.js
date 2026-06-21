@@ -1,3 +1,6 @@
+import https from 'https';
+import http from 'http';
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -14,20 +17,116 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Mobile number required" });
   }
 
-  const debug = {
-    steps: [],
-    errors: [],
-    raw_responses: []
-  };
+  // Your working proxies
+  const PROXIES = [
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_14068911_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_76090875_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_55959051_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_20782905_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_15476846_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_55677753_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_36922492_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_58760767_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_25856756_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_18064269_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_90704531_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_80377955_time_15:4318888@change5.owlproxy.com:7778",
+    "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_91038744_time_15:4318888@change5.owlproxy.com:7778",
+  ];
 
   const API_URL = "https://samagra.gov.in/Services/CommonWebApi.svc/GetDetailsBySamagra";
   const HEADERS = {
-    "User-Agent": "okhttp/3.12.1",
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
     "Content-Type": "application/json; charset=UTF-8",
     "Authorization": "Basic c2FtYWdyYUFwaTpzYW1hZ3JhQDEyMw==",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-IN,en;q=0.9,hi;q=0.8",
+    "Origin": "https://samagra.gov.in",
+    "Referer": "https://samagra.gov.in/",
   };
 
-  // Helper function
+  // Parse proxy URL
+  function parseProxyUrl(proxyUrl) {
+    const url = new URL(proxyUrl);
+    return {
+      host: url.hostname,
+      port: parseInt(url.port),
+      auth: url.username ? `${url.username}:${url.password}` : null
+    };
+  }
+
+  // Shuffle array for random proxy selection
+  function shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  // Fetch with custom proxy agent
+  async function fetchWithProxy(url, options, proxyUrl) {
+    return new Promise((resolve, reject) => {
+      const proxy = parseProxyUrl(proxyUrl);
+      
+      // Create custom agent with proxy
+      const agent = new https.Agent({
+        host: proxy.host,
+        port: proxy.port,
+        auth: proxy.auth,
+        rejectUnauthorized: false,
+        keepAlive: true,
+        timeout: 30000
+      });
+
+      // Parse the target URL
+      const targetUrl = new URL(url);
+      
+      const requestOptions = {
+        hostname: targetUrl.hostname,
+        port: targetUrl.port || 443,
+        path: targetUrl.pathname + targetUrl.search,
+        method: options.method || 'POST',
+        headers: {
+          ...options.headers,
+          'Host': targetUrl.hostname
+        },
+        agent: agent,
+        timeout: 30000
+      };
+
+      const request = https.request(requestOptions, (response) => {
+        let data = '';
+        response.on('data', (chunk) => {
+          data += chunk;
+        });
+        response.on('end', () => {
+          resolve({
+            status: response.statusCode,
+            text: data,
+            headers: response.headers
+          });
+        });
+      });
+
+      request.on('error', (error) => {
+        reject(error);
+      });
+
+      request.on('timeout', () => {
+        request.destroy();
+        reject(new Error('Request timeout'));
+      });
+
+      if (options.body) {
+        request.write(options.body);
+      }
+      request.end();
+    });
+  }
+
+  // Helper function to recursively search for keys
   function smartGet(obj, keys) {
     if (typeof obj !== 'object' || obj === null) return null;
     if (Array.isArray(obj)) {
@@ -47,243 +146,172 @@ export default async function handler(req, res) {
     return null;
   }
 
-  // Fetch function with full debugging
-  async function fetchWithDebug(payload, stepName) {
-    try {
-      debug.steps.push(`${stepName}: Sending request with payload: ${JSON.stringify(payload)}`);
+  // Fetch Samagra API with proxy rotation
+  async function fetchSamagra(payload, retries = 13) {
+    const shuffledProxies = shuffleArray(PROXIES);
+    let lastError = null;
+
+    for (let i = 0; i < Math.min(retries, shuffledProxies.length); i++) {
+      const proxyUrl = shuffledProxies[i];
       
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: HEADERS,
-        body: JSON.stringify(payload)
-      });
-
-      debug.steps.push(`${stepName}: Response status: ${response.status}`);
-      debug.steps.push(`${stepName}: Response headers: ${JSON.stringify(Object.fromEntries(response.headers))}`);
-
-      const text = await response.text();
-      debug.raw_responses.push({
-        step: stepName,
-        status: response.status,
-        body_preview: text.substring(0, 1000),
-        body_length: text.length
-      });
-
-      if (response.status !== 200) {
-        debug.errors.push(`${stepName}: Non-200 status: ${response.status}`);
-        return null;
-      }
-
-      // Try multiple parsing approaches
-      let data = null;
-      const cleanText = text.replace(/^\uFEFF/, '').trim();
-
-      // Try 1: Direct JSON parse
       try {
-        data = JSON.parse(cleanText);
-        debug.steps.push(`${stepName}: Direct JSON parse successful`);
-      } catch (e1) {
-        debug.errors.push(`${stepName}: Direct JSON parse failed: ${e1.message}`);
+        console.log(`Trying proxy ${i + 1}: ${proxyUrl.split('@')[1]}`);
         
-        // Try 2: Handle BOM and special characters
-        try {
-          const utf8Text = Buffer.from(text, 'utf-8').toString('utf-8').replace(/^\uFEFF/, '').trim();
-          data = JSON.parse(utf8Text);
-          debug.steps.push(`${stepName}: UTF8 parse successful`);
-        } catch (e2) {
-          debug.errors.push(`${stepName}: UTF8 parse failed: ${e2.message}`);
-          
-          // Try 3: Remove non-printable characters
-          try {
-            const printableText = cleanText.replace(/[^\x20-\x7E\u0900-\u097F]/g, '');
-            data = JSON.parse(printableText);
-            debug.steps.push(`${stepName}: Printable text parse successful`);
-          } catch (e3) {
-            debug.errors.push(`${stepName}: All parse attempts failed`);
-            return null;
-          }
+        const response = await fetchWithProxy(API_URL, {
+          method: 'POST',
+          headers: HEADERS,
+          body: JSON.stringify(payload)
+        }, proxyUrl);
+
+        if (response.status === 200) {
+          console.log(`Success with proxy ${i + 1}`);
+          const text = response.text;
+          const cleanText = text.replace(/^\uFEFF/, '').trim();
+          const data = JSON.parse(cleanText);
+          return data.d || data;
+        } else {
+          console.log(`Proxy ${i + 1} returned status ${response.status}`);
+          lastError = new Error(`Status ${response.status}`);
         }
+      } catch (error) {
+        console.log(`Proxy ${i + 1} failed: ${error.message}`);
+        lastError = error;
+        continue;
       }
-
-      return data.d || data;
-
-    } catch (error) {
-      debug.errors.push(`${stepName}: Fetch error: ${error.message}`);
-      return null;
     }
+
+    throw lastError || new Error('All proxies failed');
   }
 
-  // Get user IDs
-  async function getUserIds(mobileNo) {
-    const res = await fetchWithDebug({ 
+  try {
+    console.log(`Searching for mobile: ${mobile}`);
+
+    // Search by mobile
+    const mobileResult = await fetchSamagra({ 
       samagraID: "0", 
-      MobileNo: mobileNo 
-    }, "MobileSearch");
+      MobileNo: mobile 
+    });
 
-    if (!res) {
-      debug.errors.push("MobileSearch: No response received");
-      return [];
-    }
-
-    debug.steps.push(`MobileSearch: Response type: ${typeof res}`);
-    debug.steps.push(`MobileSearch: Is array: ${Array.isArray(res)}`);
-    debug.steps.push(`MobileSearch: Keys: ${Object.keys(res).join(', ')}`);
-
-    // Handle different response structures
+    // Parse items
     let items = [];
-    
-    if (Array.isArray(res)) {
-      items = res;
-      debug.steps.push(`MobileSearch: Found array with ${items.length} items`);
-    } else if (res.data && Array.isArray(res.data)) {
-      items = res.data;
-      debug.steps.push(`MobileSearch: Found data array with ${items.length} items`);
-    } else if (res.data && typeof res.data === 'object') {
-      items = [res.data];
-      debug.steps.push(`MobileSearch: Single data object`);
-    } else if (typeof res === 'object' && Object.keys(res).length > 0) {
-      items = [res];
-      debug.steps.push(`MobileSearch: Using entire response as single item`);
+    if (Array.isArray(mobileResult)) {
+      items = mobileResult;
+    } else if (mobileResult?.data && Array.isArray(mobileResult.data)) {
+      items = mobileResult.data;
+    } else if (mobileResult?.data) {
+      items = [mobileResult.data];
+    } else if (mobileResult) {
+      items = [mobileResult];
     }
 
-    // Check all possible ID fields
-    if (items.length > 0) {
-      const firstItem = items[0];
-      debug.steps.push(`First item keys: ${Object.keys(firstItem).join(', ')}`);
-      debug.steps.push(`First item preview: ${JSON.stringify(firstItem).substring(0, 300)}`);
-    }
+    console.log(`Found ${items.length} items`);
 
+    // Extract IDs
     const ids = [];
     for (const item of items) {
       const uid = smartGet(item, [
         "UserID", "samagraID", "MemberID", "SamagraID",
-        "UserId", "SamagraId", "MemberId", "id", "ID",
-        "userid", "samagraid", "memberid"
+        "UserId", "SamagraId", "MemberId"
       ]);
-      if (uid) {
-        debug.steps.push(`Found ID: ${uid}`);
-        ids.push(String(uid));
-      }
+      if (uid) ids.push(String(uid));
     }
 
-    if (ids.length === 0 && items.length > 0) {
-      debug.errors.push("No ID field found in items. Available keys: " + 
-        Object.keys(items[0]).join(', '));
-    }
+    const uniqueIds = [...new Set(ids)];
+    console.log(`Found ${uniqueIds.length} unique IDs`);
 
-    return [...new Set(ids)];
-  }
-
-  // Get full details
-  async function getFullIntel(uid) {
-    const res = await fetchWithDebug({ 
-      samagraID: String(uid) 
-    }, `DetailsFor_${uid}`);
-
-    if (!res) return null;
-
-    const name = smartGet(res, [
-      "MemberNameE", "Name", "FullName", "MemberName",
-      "memberNameE", "name", "fullName", "memberName"
-    ]);
-    
-    const dob = smartGet(res, [
-      "Dob", "DOB", "DateOfBirth", "dob", "dateOfBirth"
-    ]);
-    
-    const gender = smartGet(res, [
-      "Gender", "Sex", "gender", "sex"
-    ]);
-    
-    const mob = smartGet(res, [
-      "MobileNo", "Mobile", "mobileNo", "mobile"
-    ]);
-    
-    const address = smartGet(res, [
-      "Address", "FullAddress", "address", "fullAddress",
-      "AddressE", "AddressH"  // Hindi address support
-    ]);
-    
-    const district = smartGet(res, [
-      "District", "DistrictName", "district", "districtName"
-    ]);
-    
-    const category = smartGet(res, [
-      "CategoryName", "Category", "categoryName", "category"
-    ]);
-    
-    const photoB64 = smartGet(res, [
-      "Photo", "PhotoBase64", "PhotoUrl", "photo", "photoBase64"
-    ]);
-
-    let photoUrl = null;
-    if (photoB64) {
-      try {
-        let cleanB64 = photoB64;
-        if (cleanB64.includes(",")) {
-          cleanB64 = cleanB64.split(",")[1];
-        }
-        cleanB64 += '='.repeat((4 - cleanB64.length % 4) % 4);
-        photoUrl = `data:image/jpeg;base64,${cleanB64}`;
-      } catch (e) {
-        debug.errors.push(`Photo conversion error: ${e.message}`);
-      }
-    }
-
-    return {
-      uid,
-      name,
-      dob,
-      gender,
-      mobile: mob,
-      address,
-      district,
-      category,
-      photo: photoUrl
-    };
-  }
-
-  try {
-    const uids = await getUserIds(mobile);
-    debug.steps.push(`Total UIDs found: ${uids.length}`);
-
-    if (!uids || uids.length === 0) {
-      return res.status(200).json({
+    if (uniqueIds.length === 0) {
+      return res.json({ 
         success: false,
         message: "No records found",
-        debug: {
-          mobile_searched: mobile,
-          timestamp: new Date().toISOString(),
-          steps: debug.steps,
-          errors: debug.errors,
-          raw_responses: debug.raw_responses
-        }
+        items_found: items.length
       });
     }
 
+    // Get details for each ID
     const results = [];
-    for (const uid of uids) {
-      const data = await getFullIntel(uid);
-      if (data) results.push(data);
+    for (const uid of uniqueIds) {
+      console.log(`Getting details for UID: ${uid}`);
+      
+      const detailResult = await fetchSamagra({ 
+        samagraID: String(uid) 
+      });
+
+      if (!detailResult) continue;
+
+      const name = smartGet(detailResult, [
+        "MemberNameE", "Name", "FullName", "MemberName"
+      ]);
+      
+      const dob = smartGet(detailResult, [
+        "Dob", "DOB", "DateOfBirth"
+      ]);
+      
+      const gender = smartGet(detailResult, [
+        "Gender", "Sex"
+      ]);
+      
+      const mobNo = smartGet(detailResult, [
+        "MobileNo", "Mobile"
+      ]);
+      
+      const address = smartGet(detailResult, [
+        "Address", "FullAddress", "AddressE", "AddressH"
+      ]);
+      
+      const district = smartGet(detailResult, [
+        "District", "DistrictName"
+      ]);
+      
+      const category = smartGet(detailResult, [
+        "CategoryName", "Category"
+      ]);
+      
+      const photoB64 = smartGet(detailResult, [
+        "Photo", "PhotoBase64", "PhotoUrl"
+      ]);
+
+      // Convert photo to base64 URL
+      let photoUrl = null;
+      if (photoB64) {
+        try {
+          let cleanB64 = photoB64;
+          if (cleanB64.includes(",")) {
+            cleanB64 = cleanB64.split(",")[1];
+          }
+          cleanB64 += '='.repeat((4 - cleanB64.length % 4) % 4);
+          photoUrl = `data:image/jpeg;base64,${cleanB64}`;
+        } catch (e) {
+          console.error('Photo conversion error:', e);
+        }
+      }
+
+      results.push({
+        uid,
+        name,
+        dob,
+        gender,
+        mobile: mobNo,
+        address,
+        district,
+        category,
+        photo: photoUrl
+      });
     }
 
-    return res.status(200).json({
+    console.log(`Returning ${results.length} results`);
+
+    return res.json({
       success: true,
       count: results.length,
-      results,
-      debug: {
-        steps: debug.steps,
-        raw_responses_count: debug.raw_responses.length
-      }
+      results
     });
 
   } catch (error) {
-    debug.errors.push(`Main error: ${error.message}`);
+    console.error('Final error:', error);
     return res.status(500).json({
       success: false,
-      error: "Internal server error",
-      message: error.message,
-      debug
+      message: "All proxies failed or request error",
+      error: error.message
     });
   }
 }
