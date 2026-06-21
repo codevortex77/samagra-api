@@ -1,6 +1,3 @@
-import https from 'https';
-import http from 'http';
-
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -17,7 +14,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Mobile number required" });
   }
 
-  // Your working proxies
   const PROXIES = [
     "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_14068911_time_15:4318888@change5.owlproxy.com:7778",
     "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_76090875_time_15:4318888@change5.owlproxy.com:7778",
@@ -45,88 +41,7 @@ export default async function handler(req, res) {
     "Referer": "https://samagra.gov.in/",
   };
 
-  // Parse proxy URL
-  function parseProxyUrl(proxyUrl) {
-    const url = new URL(proxyUrl);
-    return {
-      host: url.hostname,
-      port: parseInt(url.port),
-      auth: url.username ? `${url.username}:${url.password}` : null
-    };
-  }
-
-  // Shuffle array for random proxy selection
-  function shuffleArray(array) {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
-  }
-
-  // Fetch with custom proxy agent
-  async function fetchWithProxy(url, options, proxyUrl) {
-    return new Promise((resolve, reject) => {
-      const proxy = parseProxyUrl(proxyUrl);
-      
-      // Create custom agent with proxy
-      const agent = new https.Agent({
-        host: proxy.host,
-        port: proxy.port,
-        auth: proxy.auth,
-        rejectUnauthorized: false,
-        keepAlive: true,
-        timeout: 30000
-      });
-
-      // Parse the target URL
-      const targetUrl = new URL(url);
-      
-      const requestOptions = {
-        hostname: targetUrl.hostname,
-        port: targetUrl.port || 443,
-        path: targetUrl.pathname + targetUrl.search,
-        method: options.method || 'POST',
-        headers: {
-          ...options.headers,
-          'Host': targetUrl.hostname
-        },
-        agent: agent,
-        timeout: 30000
-      };
-
-      const request = https.request(requestOptions, (response) => {
-        let data = '';
-        response.on('data', (chunk) => {
-          data += chunk;
-        });
-        response.on('end', () => {
-          resolve({
-            status: response.statusCode,
-            text: data,
-            headers: response.headers
-          });
-        });
-      });
-
-      request.on('error', (error) => {
-        reject(error);
-      });
-
-      request.on('timeout', () => {
-        request.destroy();
-        reject(new Error('Request timeout'));
-      });
-
-      if (options.body) {
-        request.write(options.body);
-      }
-      request.end();
-    });
-  }
-
-  // Helper function to recursively search for keys
+  // Helper function
   function smartGet(obj, keys) {
     if (typeof obj !== 'object' || obj === null) return null;
     if (Array.isArray(obj)) {
@@ -146,41 +61,101 @@ export default async function handler(req, res) {
     return null;
   }
 
-  // Fetch Samagra API with proxy rotation
-  async function fetchSamagra(payload, retries = 13) {
-    const shuffledProxies = shuffleArray(PROXIES);
-    let lastError = null;
+  // Fetch through proxy
+  async function fetchWithProxy(url, payload, proxyUrl) {
+    // Parse proxy URL
+    const proxyMatch = proxyUrl.match(/http:\/\/(.*):(.*)@(.*):(\d+)/);
+    if (!proxyMatch) throw new Error('Invalid proxy format');
+    
+    const [, username, password, host, port] = proxyMatch;
+    const auth = Buffer.from(`${username}:${password}`).toString('base64');
 
-    for (let i = 0; i < Math.min(retries, shuffledProxies.length); i++) {
+    const targetUrl = new URL(url);
+    
+    // Create the proxy request body
+    const requestBody = JSON.stringify(payload);
+    
+    // Using HTTP CONNECT method for HTTPS through proxy
+    const proxyResponse = await fetch(`http://${host}:${port}`, {
+      method: 'POST',
+      headers: {
+        'Proxy-Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url: url,
+        method: 'POST',
+        headers: HEADERS,
+        body: requestBody
+      })
+    });
+
+    if (!proxyResponse.ok) {
+      throw new Error(`Proxy returned ${proxyResponse.status}`);
+    }
+
+    return await proxyResponse.json();
+  }
+
+  // Direct fetch attempt (might work from some Vercel edge locations)
+  async function fetchDirect(payload) {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: HEADERS,
+      body: JSON.stringify(payload)
+    });
+
+    if (response.status === 200) {
+      const text = await response.text();
+      const cleanText = text.replace(/^\uFEFF/, '').trim();
+      const data = JSON.parse(cleanText);
+      return data.d || data;
+    }
+    
+    throw new Error(`Direct fetch failed with status ${response.status}`);
+  }
+
+  // Fetch with proxy rotation
+  async function fetchSamagra(payload) {
+    // First try direct connection (might work from some Vercel edge locations)
+    try {
+      console.log('Trying direct connection...');
+      return await fetchDirect(payload);
+    } catch (error) {
+      console.log('Direct connection failed, trying proxies...');
+    }
+
+    // Try each proxy
+    const shuffledProxies = PROXIES.sort(() => Math.random() - 0.5);
+    
+    for (let i = 0; i < shuffledProxies.length; i++) {
       const proxyUrl = shuffledProxies[i];
-      
       try {
-        console.log(`Trying proxy ${i + 1}: ${proxyUrl.split('@')[1]}`);
+        console.log(`Trying proxy ${i + 1}/${shuffledProxies.length}`);
         
-        const response = await fetchWithProxy(API_URL, {
+        const response = await fetch(API_URL, {
           method: 'POST',
-          headers: HEADERS,
+          headers: {
+            ...HEADERS,
+            // Use proxy headers
+            'X-Proxy-Url': proxyUrl,
+          },
           body: JSON.stringify(payload)
-        }, proxyUrl);
+        });
 
         if (response.status === 200) {
-          console.log(`Success with proxy ${i + 1}`);
-          const text = response.text;
+          const text = await response.text();
           const cleanText = text.replace(/^\uFEFF/, '').trim();
           const data = JSON.parse(cleanText);
           return data.d || data;
-        } else {
-          console.log(`Proxy ${i + 1} returned status ${response.status}`);
-          lastError = new Error(`Status ${response.status}`);
         }
       } catch (error) {
         console.log(`Proxy ${i + 1} failed: ${error.message}`);
-        lastError = error;
         continue;
       }
     }
 
-    throw lastError || new Error('All proxies failed');
+    throw new Error('All connection attempts failed');
   }
 
   try {
@@ -204,8 +179,6 @@ export default async function handler(req, res) {
       items = [mobileResult];
     }
 
-    console.log(`Found ${items.length} items`);
-
     // Extract IDs
     const ids = [];
     for (const item of items) {
@@ -217,72 +190,41 @@ export default async function handler(req, res) {
     }
 
     const uniqueIds = [...new Set(ids)];
-    console.log(`Found ${uniqueIds.length} unique IDs`);
 
     if (uniqueIds.length === 0) {
       return res.json({ 
         success: false,
         message: "No records found",
-        items_found: items.length
+        items_found: items.length,
+        first_item_keys: items[0] ? Object.keys(items[0]) : []
       });
     }
 
     // Get details for each ID
     const results = [];
     for (const uid of uniqueIds) {
-      console.log(`Getting details for UID: ${uid}`);
-      
       const detailResult = await fetchSamagra({ 
         samagraID: String(uid) 
       });
 
       if (!detailResult) continue;
 
-      const name = smartGet(detailResult, [
-        "MemberNameE", "Name", "FullName", "MemberName"
-      ]);
-      
-      const dob = smartGet(detailResult, [
-        "Dob", "DOB", "DateOfBirth"
-      ]);
-      
-      const gender = smartGet(detailResult, [
-        "Gender", "Sex"
-      ]);
-      
-      const mobNo = smartGet(detailResult, [
-        "MobileNo", "Mobile"
-      ]);
-      
-      const address = smartGet(detailResult, [
-        "Address", "FullAddress", "AddressE", "AddressH"
-      ]);
-      
-      const district = smartGet(detailResult, [
-        "District", "DistrictName"
-      ]);
-      
-      const category = smartGet(detailResult, [
-        "CategoryName", "Category"
-      ]);
-      
-      const photoB64 = smartGet(detailResult, [
-        "Photo", "PhotoBase64", "PhotoUrl"
-      ]);
+      const name = smartGet(detailResult, ["MemberNameE", "Name", "FullName", "MemberName"]);
+      const dob = smartGet(detailResult, ["Dob", "DOB", "DateOfBirth"]);
+      const gender = smartGet(detailResult, ["Gender", "Sex"]);
+      const mobNo = smartGet(detailResult, ["MobileNo", "Mobile"]);
+      const address = smartGet(detailResult, ["Address", "FullAddress", "AddressE", "AddressH"]);
+      const district = smartGet(detailResult, ["District", "DistrictName"]);
+      const category = smartGet(detailResult, ["CategoryName", "Category"]);
+      const photoB64 = smartGet(detailResult, ["Photo", "PhotoBase64", "PhotoUrl"]);
 
-      // Convert photo to base64 URL
       let photoUrl = null;
       if (photoB64) {
         try {
-          let cleanB64 = photoB64;
-          if (cleanB64.includes(",")) {
-            cleanB64 = cleanB64.split(",")[1];
-          }
+          let cleanB64 = photoB64.includes(",") ? photoB64.split(",")[1] : photoB64;
           cleanB64 += '='.repeat((4 - cleanB64.length % 4) % 4);
           photoUrl = `data:image/jpeg;base64,${cleanB64}`;
-        } catch (e) {
-          console.error('Photo conversion error:', e);
-        }
+        } catch (e) {}
       }
 
       results.push({
@@ -298,8 +240,6 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log(`Returning ${results.length} results`);
-
     return res.json({
       success: true,
       count: results.length,
@@ -310,7 +250,7 @@ export default async function handler(req, res) {
     console.error('Final error:', error);
     return res.status(500).json({
       success: false,
-      message: "All proxies failed or request error",
+      message: "Failed to fetch data",
       error: error.message
     });
   }
