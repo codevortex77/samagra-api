@@ -12,11 +12,11 @@
       "dest": "/api/search.js"
     },
     {
-      "src": "/",
-      "dest": "/api/index.js"
+      "src": "/api/photos/(.*)",
+      "dest": "/api/photos/[filename].js"
     },
     {
-      "src": "/(.*)",
+      "src": "/",
       "dest": "/api/index.js"
     }
   ]
