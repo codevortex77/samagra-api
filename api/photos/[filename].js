@@ -1,15 +1,16 @@
+import { ProxyAgent, fetch } from 'undici';
+
 export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
   const { filename } = req.query;
+  if (!filename) return res.status(400).json({ error: "Member ID required" });
 
-  if (!filename) {
-    return res.status(400).json({ error: "Filename required" });
-  }
-
-  const PROXY = "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_14068911_time_15:4318888@change5.owlproxy.com:7778";
+  const PROXY_URL = "http://Lz8gYXGWn190_custom_zone_IN_st__city_sid_14068911_time_15:4318888@change5.owlproxy.com:7778";
+  const API_URL = "https://samagra.gov.in/Services/CommonWebApi.svc/GetDetailsBySamagra";
+  const proxyAgent = new ProxyAgent(PROXY_URL);
 
   try {
-    // First get the photo base64 from Samagra API
-    const response = await fetch("https://samagra.gov.in/Services/CommonWebApi.svc/GetDetailsBySamagra", {
+    const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
         'User-Agent': 'okhttp/3.12.1',
@@ -17,53 +18,31 @@ export default async function handler(req, res) {
         'Authorization': 'Basic c2FtYWdyYUFwaTpzYW1hZ3JhQDEyMw==',
       },
       body: JSON.stringify({ samagraID: filename }),
+      dispatcher: proxyAgent,
     });
 
-    if (!response.ok) {
-      return res.status(404).json({ error: "Photo not found" });
-    }
+    if (!response.ok) return res.status(404).json({ error: "Not found" });
 
     const text = await response.text();
-    const cleanText = text.replace(/^\uFEFF/, '').trim();
-    const data = JSON.parse(cleanText);
+    const data = JSON.parse(text.replace(/^\uFEFF/, '').trim());
     const result = data.d || data;
 
-    // Extract photo
     let photoB64 = null;
-    function findPhoto(obj) {
-      if (typeof obj !== 'object' || obj === null) return;
-      if (Array.isArray(obj)) {
-        obj.forEach(findPhoto);
-        return;
+    JSON.stringify(result, (key, value) => {
+      if (key === "Photo" && typeof value === "string" && value.length > 100) {
+        photoB64 = value;
       }
-      for (const [key, value] of Object.entries(obj)) {
-        if (key === "Photo" && typeof value === "string" && value.length > 100) {
-          photoB64 = value;
-          return;
-        }
-        if (typeof value === 'object') findPhoto(value);
-      }
-    }
-    findPhoto(result);
+      return value;
+    });
 
-    if (!photoB64) {
-      return res.status(404).json({ error: "No photo found" });
-    }
+    if (!photoB64) return res.status(404).json({ error: "No photo" });
 
-    // Clean and decode base64
-    let cleanB64 = photoB64;
-    if (cleanB64.includes(",")) {
-      cleanB64 = cleanB64.split(",")[1];
-    }
+    let cleanB64 = photoB64.includes(",") ? photoB64.split(",")[1] : photoB64;
     cleanB64 += '='.repeat((4 - cleanB64.length % 4) % 4);
 
-    const imgBuffer = Buffer.from(cleanB64, 'base64');
-
-    // Set headers and send image
     res.setHeader('Content-Type', 'image/jpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.status(200).send(imgBuffer);
-
+    res.status(200).send(Buffer.from(cleanB64, 'base64'));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
