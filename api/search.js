@@ -14,6 +14,11 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Mobile number required" });
   }
 
+  // Validate mobile number (10 digits)
+  if (!/^\d{10}$/.test(mobile)) {
+    return res.status(400).json({ error: "Invalid mobile number. Must be 10 digits." });
+  }
+
   const API_URL = "https://samagra.gov.in/Services/CommonWebApi.svc/GetDetailsBySamagra";
   const HEADERS = {
     "User-Agent": "okhttp/3.12.1",
@@ -43,22 +48,43 @@ export default async function handler(req, res) {
     return null;
   }
 
-  // Fetch function
+  // Fetch function with better error handling
   async function fetchSamagra(payload) {
     try {
+      console.log('Fetching with payload:', JSON.stringify(payload));
+      
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: HEADERS,
         body: JSON.stringify(payload)
       });
 
-      if (response.status !== 200) return null;
+      console.log('Response status:', response.status);
+      
+      if (response.status !== 200) {
+        console.log('Non-200 response:', response.status);
+        return null;
+      }
       
       const text = await response.text();
-      const cleanText = text.replace(/^\uFEFF/, '').trim();
-      const data = JSON.parse(cleanText);
+      console.log('Raw response (first 500 chars):', text.substring(0, 500));
       
+      // Clean BOM and whitespace
+      const cleanText = text.replace(/^\uFEFF/, '').trim();
+      
+      // Try to parse JSON
+      let data;
+      try {
+        data = JSON.parse(cleanText);
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        console.log('Failed text:', cleanText.substring(0, 200));
+        return null;
+      }
+      
+      // Return d property if exists, otherwise return data
       return data.d || data;
+      
     } catch (error) {
       console.error('Fetch error:', error);
       return null;
@@ -67,39 +93,70 @@ export default async function handler(req, res) {
 
   // Get user IDs by mobile
   async function getUserIds(mobileNo) {
-    const res = await fetchSamagra({ samagraID: "0", MobileNo: mobileNo });
+    console.log('Searching for mobile:', mobileNo);
+    
+    const res = await fetchSamagra({ 
+      samagraID: "0", 
+      MobileNo: mobileNo 
+    });
+    
+    console.log('Mobile search result type:', typeof res);
+    console.log('Mobile search result:', JSON.stringify(res).substring(0, 500));
+    
     if (!res) return [];
 
-    let items = Array.isArray(res) ? res : (res.data || []);
-    if (!items.length && typeof res === 'object') {
+    // Handle different response structures
+    let items = [];
+    
+    if (Array.isArray(res)) {
+      items = res;
+    } else if (res.data && Array.isArray(res.data)) {
+      items = res.data;
+    } else if (res.data && typeof res.data === 'object') {
+      items = [res.data];
+    } else if (typeof res === 'object') {
+      // Check if it's a single record
       items = [res];
     }
-
+    
+    console.log('Items found:', items.length);
+    
     const ids = [];
     for (const item of items) {
-      const uid = smartGet(item, ["UserID", "samagraID", "MemberID"]);
-      if (uid) ids.push(String(uid));
+      const uid = smartGet(item, ["UserID", "samagraID", "MemberID", "SamagraID"]);
+      if (uid) {
+        console.log('Found ID:', uid);
+        ids.push(String(uid));
+      }
     }
+    
+    console.log('All IDs:', ids);
     return [...new Set(ids)];
   }
 
   // Get full details by user ID
   async function getFullIntel(uid) {
-    const res = await fetchSamagra({ samagraID: String(uid) });
+    console.log('Getting details for UID:', uid);
+    
+    const res = await fetchSamagra({ 
+      samagraID: String(uid) 
+    });
+    
     if (!res) return null;
 
-    const name = smartGet(res, ["MemberNameE", "Name", "FullName"]);
-    const dob = smartGet(res, ["Dob", "DOB"]);
-    const gender = smartGet(res, ["Gender"]);
-    const mob = smartGet(res, ["MobileNo"]);
-    const address = smartGet(res, ["Address"]);
-    const district = smartGet(res, ["District"]);
-    const category = smartGet(res, ["CategoryName"]);
-    const photoB64 = smartGet(res, ["Photo"]);
+    console.log('UID result:', JSON.stringify(res).substring(0, 500));
+
+    const name = smartGet(res, ["MemberNameE", "Name", "FullName", "MemberName"]);
+    const dob = smartGet(res, ["Dob", "DOB", "DateOfBirth"]);
+    const gender = smartGet(res, ["Gender", "Sex"]);
+    const mob = smartGet(res, ["MobileNo", "Mobile"]);
+    const address = smartGet(res, ["Address", "FullAddress"]);
+    const district = smartGet(res, ["District", "DistrictName"]);
+    const category = smartGet(res, ["CategoryName", "Category"]);
+    const photoB64 = smartGet(res, ["Photo", "PhotoBase64", "PhotoUrl"]);
 
     let photoUrl = null;
     if (photoB64) {
-      // Convert base64 to data URL (Vercel doesn't support local file storage)
       try {
         let cleanB64 = photoB64;
         if (cleanB64.includes(",")) {
@@ -127,10 +184,20 @@ export default async function handler(req, res) {
   }
 
   try {
+    console.log('Starting search for mobile:', mobile);
+    
     const uids = await getUserIds(mobile);
+    
+    console.log('Total UIDs found:', uids.length);
 
     if (!uids || uids.length === 0) {
-      return res.status(404).json({ message: "No records found" });
+      return res.status(404).json({ 
+        message: "No records found",
+        debug: {
+          mobile_searched: mobile,
+          timestamp: new Date().toISOString()
+        }
+      });
     }
 
     const results = [];
@@ -138,6 +205,8 @@ export default async function handler(req, res) {
       const data = await getFullIntel(uid);
       if (data) results.push(data);
     }
+
+    console.log('Final results count:', results.length);
 
     return res.status(200).json({
       count: results.length,
@@ -151,4 +220,4 @@ export default async function handler(req, res) {
       message: error.message
     });
   }
-      }
+}
